@@ -21,6 +21,6 @@ From the img2img screen, select txt2mask as your active script:
 
 In the `Mask Prompt` field, enter the text to search for within your image. (In the case of the topmost screenshot, this value would be 'business suit' and the prompt box at the top of your UI would say 'sci-fi battle suit.')
 
-Adjust the `Mask Precision` field to increase or decrease the confidence of that which is masked. Raising this value too high means it may select more than you intend.
+Adjust the `Mask Precision` field to increase or decrease the confidence of that which is masked. Lowering this value too much means it may select more than you intend.
 
 Press Generate. That's it!
