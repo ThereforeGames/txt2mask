@@ -24,3 +24,7 @@ In the `Mask Prompt` field, enter the text to search for within your image. (In 
 Adjust the `Mask Precision` field to increase or decrease the confidence of that which is masked. Lowering this value too much means it may select more than you intend.
 
 Press Generate. That's it!
+
+## Known Issues
+
+- The "inpainting at full resolution" option can cause this script to crash. Looking for a fix.
