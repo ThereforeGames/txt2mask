@@ -10,7 +10,8 @@ from modules.shared import opts, cmd_opts, state, Options
 
 import torch
 import cv2
-import base64
+import requests
+import os.path
 
 from repositories.clipseg.models.clipseg import CLIPDensePredT
 from PIL import Image
@@ -19,7 +20,7 @@ from matplotlib import pyplot as plt
 
 class Script(scripts.Script):
 	def title(self):
-		return "txt2mask v0.0.1"
+		return "txt2mask v0.0.2"
 
 	def show(self, is_img2img):
 		return is_img2img
@@ -36,14 +37,29 @@ class Script(scripts.Script):
 		return [mask_prompt,mask_precision, plug]
 
 	def run(self, p, mask_prompt, mask_precision, plug):
+		def download_file(filename, url):
+			with open(filename, 'wb') as fout:
+				response = requests.get(url, stream=True)
+				response.raise_for_status()
+				# Write response data to file
+				for block in response.iter_content(4096):
+					fout.write(block)
 
 		def get_mask():
 			# load model
 			model = CLIPDensePredT(version='ViT-B/16', reduce_dim=64)
 			model.eval();
-
+			d64_file = "./repositories/clipseg/weights/rd64-uni.pth"
+			d16_file = "./repositories/clipseg/weights/rd16-uni.pth"
+			
+			# Download model weights if we don't have them yet
+			if not os.path.exists(d64_file):
+				print("Downloading clipseg model weights...")
+				download_file(d64_file,"https://github.com/timojl/clipseg/raw/master/weights/rd64-uni.pth")
+				download_file(d16_file,"https://github.com/timojl/clipseg/raw/master/weights/rd16-uni.pth")
+			
 			# non-strict, because we only stored decoder weights (not CLIP weights)
-			model.load_state_dict(torch.load('./repositories/clipseg/weights/rd64-uni.pth', map_location=torch.device('cuda')), strict=False);			
+			model.load_state_dict(torch.load(d64_file, map_location=torch.device('cuda')), strict=False);			
 
 			transform = transforms.Compose([
 				transforms.ToTensor(),
