@@ -20,7 +20,7 @@ from matplotlib import pyplot as plt
 
 class Script(scripts.Script):
 	def title(self):
-		return "txt2mask v0.0.2"
+		return "txt2mask v0.0.3"
 
 	def show(self, is_img2img):
 		return is_img2img
@@ -31,12 +31,13 @@ class Script(scripts.Script):
 
 		mask_prompt = gr.Textbox(label="Mask prompt", lines=1)
 		mask_precision = gr.Slider(label="Mask precision", minimum=0.0, maximum=255.0, step=1.0, value=96.0)
+		mask_output = gr.Checkbox(label="Show mask in output?",value=True)
 
 		plug = gr.HTML(label="plug",value='<div class="gr-block gr-box relative w-full overflow-hidden border-solid border border-gray-200 gr-panel"><p>If you like my work, please consider showing your support on <strong><a href="https://patreon.com/thereforegames" target="_blank">Patreon</a></strong>. Thank you! &#10084;</p></div>')
 
-		return [mask_prompt,mask_precision, plug]
+		return [mask_prompt,mask_precision, mask_output, plug]
 
-	def run(self, p, mask_prompt, mask_precision, plug):
+	def run(self, p, mask_prompt, mask_precision, mask_output, plug):
 		def download_file(filename, url):
 			with open(filename, 'wb') as fout:
 				response = requests.get(url, stream=True)
@@ -102,5 +103,8 @@ class Script(scripts.Script):
 		p.image_mask = get_mask()
 
 		processed = processing.process_images(p)
+
+		if (mask_output):
+			processed.images.append(p.image_mask)
 
 		return processed
