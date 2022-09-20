@@ -58,6 +58,7 @@ class Script(scripts.Script):
 			model = CLIPDensePredT(version='ViT-B/16', reduce_dim=64)
 			model.eval();
 			model_dir = "./repositories/clipseg/weights"
+			os.makedirs(model_dir, exist_ok=True)
 			d64_file = f"{model_dir}/rd64-uni.pth"
 			d16_file = f"{model_dir}/rd16-uni.pth"
 			
