@@ -14,13 +14,14 @@ import requests
 import os.path
 
 from repositories.clipseg.models.clipseg import CLIPDensePredT
-from PIL import Image
+from PIL import ImageChops, Image
 from torchvision import transforms
 from matplotlib import pyplot as plt
+import numpy
 
 class Script(scripts.Script):
 	def title(self):
-		return "txt2mask v0.0.3"
+		return "txt2mask v0.0.4"
 
 	def show(self, is_img2img):
 		return is_img2img
@@ -45,13 +46,20 @@ class Script(scripts.Script):
 				# Write response data to file
 				for block in response.iter_content(4096):
 					fout.write(block)
+		def pil_to_cv2(img):
+			return (cv2.cvtColor(numpy.array(img), cv2.COLOR_RGB2BGR))
+		def cv2_to_pil(img):
+			return (Image.fromarray(cv2.cvtColor(img,cv2.COLOR_BGR2RGBA)))
+		def gray_to_pil(img):
+			return (Image.fromarray(cv2.cvtColor(img,cv2.COLOR_GRAY2RGBA)))
 
 		def get_mask():
 			# load model
 			model = CLIPDensePredT(version='ViT-B/16', reduce_dim=64)
 			model.eval();
-			d64_file = "./repositories/clipseg/weights/rd64-uni.pth"
-			d16_file = "./repositories/clipseg/weights/rd16-uni.pth"
+			model_dir = "./repositories/clipseg/weights"
+			d64_file = f"{model_dir}/rd64-uni.pth"
+			d16_file = f"{model_dir}/rd16-uni.pth"
 			
 			# Download model weights if we don't have them yet
 			if not os.path.exists(d64_file):
@@ -76,31 +84,38 @@ class Script(scripts.Script):
 			with torch.no_grad():
 				preds = model(img.repeat(prompt_parts,1,1,1), prompts)[0]
 
-			filename = f"mask.png"
-			plt.imsave(filename,torch.sigmoid(preds[0][0]))
+			for i in range(prompt_parts):
+				filename = f"mask{i}.png"
+				plt.imsave(filename,torch.sigmoid(preds[i][0]))
 
-			# TODO: Figure out how to convert the plot above to numpy instead of re-loading image
-			img = cv2.imread(filename)
+				# TODO: Figure out how to convert the plot above to numpy instead of re-loading image
+				img = cv2.imread(filename)
 
-			gray_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+				gray_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-			(thresh, bw_image) = cv2.threshold(gray_image, mask_precision, 255, cv2.THRESH_BINARY)
+				(thresh, bw_image) = cv2.threshold(gray_image, mask_precision, 255, cv2.THRESH_BINARY)
 
-			# blur_image = cv2.GaussianBlur(bw_image, (mask_blur, mask_blur), 0)
+				# For debugging only:
+				cv2.imwrite(filename,bw_image)
 
-			# For debugging only:
-			cv2.imwrite(filename,bw_image)
-
-			# fix color format
-			cv2.cvtColor(bw_image, cv2.COLOR_BGR2RGB)
-
-			return (Image.fromarray(bw_image))
+				# overlay mask parts
+				if (i > 0):
+					bw_image = ImageChops.lighter(gray_to_pil(bw_image), final_img)
+					#bw_image = pil_to_cv2(bw_image)
+					#cv2.imwrite("masktest.png",bw_image)
+					final_img = bw_image
+				else: final_img = gray_to_pil(bw_image)
+				
+			return (final_img)
 						
 
 		# Set up processor parameters correctly
 		p.mode = 1
 		p.mask_mode = 1
-		p.image_mask = get_mask()
+		p.image_mask =  get_mask().resize((p.init_images[0].width,p.init_images[0].height))
+		p.mask_for_overlay = p.image_mask
+		p.latent_mask = None # fixes inpainting full resolution
+
 
 		processed = processing.process_images(p)
 

@@ -1,7 +1,16 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## 0.0.4 - 19 September 2022
+### Added
+- Support for mask prompt delimiter, use `|` to specify multiple selctions which will be stacked additively to produce the final mask image
+
+### Changed
+- Fixed a possible issue with the clipseg weight downloader
+- Fix for crash related to inpainting at full resolution
+
 ## 0.0.3 - 19 September 2022
+### Added
 - Added option to show mask in output
 
 ## 0.0.2 - 18 September 2022

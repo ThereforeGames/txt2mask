@@ -27,5 +27,4 @@ Press Generate. That's it!
 
 ## Known Issues
 
-- The "inpainting at full resolution" option can cause this script to crash. Looking for a fix.
 - This uses a different underlying tech for language interpretation, so entering a finetuned object into the Mask Prompt won't work. In general, less is more for masking: instead of trying to mask "a one-armed man doing a backflip off a barn" you will probably have more luck writing "a man."
