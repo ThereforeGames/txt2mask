@@ -1,6 +1,10 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## 0.0.5 - 20 September 2022
+### Added
+- New "Mask Padding" option that allows you to easily expand the boundaries of the selected mask region
+
 ## 0.0.4 - 19 September 2022
 ### Added
 - Support for mask prompt delimiter, use `|` to specify multiple selctions which will be stacked additively to produce the final mask image

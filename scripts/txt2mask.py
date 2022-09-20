@@ -21,7 +21,7 @@ import numpy
 
 class Script(scripts.Script):
 	def title(self):
-		return "txt2mask v0.0.4"
+		return "txt2mask v0.0.5"
 
 	def show(self, is_img2img):
 		return is_img2img
@@ -31,14 +31,15 @@ class Script(scripts.Script):
 			return None
 
 		mask_prompt = gr.Textbox(label="Mask prompt", lines=1)
-		mask_precision = gr.Slider(label="Mask precision", minimum=0.0, maximum=255.0, step=1.0, value=96.0)
+		mask_precision = gr.Slider(label="Mask precision", minimum=0.0, maximum=255.0, step=1.0, value=100.0)
+		mask_padding = gr.Slider(label="Mask padding", minimum=0.0, maximum=500.0, step=1.0, value=0.0)
 		mask_output = gr.Checkbox(label="Show mask in output?",value=True)
 
 		plug = gr.HTML(label="plug",value='<div class="gr-block gr-box relative w-full overflow-hidden border-solid border border-gray-200 gr-panel"><p>If you like my work, please consider showing your support on <strong><a href="https://patreon.com/thereforegames" target="_blank">Patreon</a></strong>. Thank you! &#10084;</p></div>')
 
-		return [mask_prompt,mask_precision, mask_output, plug]
+		return [mask_prompt,mask_precision, mask_output, mask_padding, plug]
 
-	def run(self, p, mask_prompt, mask_precision, mask_output, plug):
+	def run(self, p, mask_prompt, mask_precision, mask_output, mask_padding, plug):
 		def download_file(filename, url):
 			with open(filename, 'wb') as fout:
 				response = requests.get(url, stream=True)
@@ -48,10 +49,19 @@ class Script(scripts.Script):
 					fout.write(block)
 		def pil_to_cv2(img):
 			return (cv2.cvtColor(numpy.array(img), cv2.COLOR_RGB2BGR))
-		def cv2_to_pil(img):
-			return (Image.fromarray(cv2.cvtColor(img,cv2.COLOR_BGR2RGBA)))
 		def gray_to_pil(img):
 			return (Image.fromarray(cv2.cvtColor(img,cv2.COLOR_GRAY2RGBA)))
+		
+		def center_crop(img,new_width,new_height):
+			width, height = img.size   # Get dimensions
+
+			left = (width - new_width)/2
+			top = (height - new_height)/2
+			right = (width + new_width)/2
+			bottom = (height + new_height)/2
+
+			# Crop the center of the image
+			return(img.crop((left, top, right, bottom)))	
 
 		def get_mask():
 			# load model
@@ -106,7 +116,15 @@ class Script(scripts.Script):
 					#cv2.imwrite("masktest.png",bw_image)
 					final_img = bw_image
 				else: final_img = gray_to_pil(bw_image)
-				
+
+			# Increase mask size for padding
+			if (mask_padding > 0):
+				aspect_ratio = p.init_images[0].width / p.init_images[0].height
+				new_width = p.init_images[0].width+mask_padding*2
+				new_height = round(new_width / aspect_ratio)
+				final_img = final_img.resize((new_width,new_height))
+				final_img = center_crop(final_img,p.init_images[0].width,p.init_images[0].height)
+		
 			return (final_img)
 						
 
