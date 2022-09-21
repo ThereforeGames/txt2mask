@@ -1,6 +1,13 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## 0.0.6 - 21 September 2022
+### Added
+- New "Negative mask prompt" field that allows you to subtract areas from your selection
+
+### Changed
+- Increased mask padding cap from 128 to 500, the padding is added to the image's original dimensions which means you might need a ton of padding if you're working with a large image
+
 ## 0.0.5 - 20 September 2022
 ### Added
 - New "Mask Padding" option that allows you to easily expand the boundaries of the selected mask region

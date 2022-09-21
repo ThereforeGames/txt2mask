@@ -21,7 +21,7 @@ import numpy
 
 class Script(scripts.Script):
 	def title(self):
-		return "txt2mask v0.0.5"
+		return "txt2mask v0.0.6"
 
 	def show(self, is_img2img):
 		return is_img2img
@@ -31,15 +31,16 @@ class Script(scripts.Script):
 			return None
 
 		mask_prompt = gr.Textbox(label="Mask prompt", lines=1)
+		negative_mask_prompt = gr.Textbox(label="Negative mask prompt", lines=1)
 		mask_precision = gr.Slider(label="Mask precision", minimum=0.0, maximum=255.0, step=1.0, value=100.0)
 		mask_padding = gr.Slider(label="Mask padding", minimum=0.0, maximum=500.0, step=1.0, value=0.0)
 		mask_output = gr.Checkbox(label="Show mask in output?",value=True)
 
 		plug = gr.HTML(label="plug",value='<div class="gr-block gr-box relative w-full overflow-hidden border-solid border border-gray-200 gr-panel"><p>If you like my work, please consider showing your support on <strong><a href="https://patreon.com/thereforegames" target="_blank">Patreon</a></strong>. Thank you! &#10084;</p></div>')
 
-		return [mask_prompt,mask_precision, mask_output, mask_padding, plug]
+		return [mask_prompt,negative_mask_prompt, mask_precision, mask_output, mask_padding, plug]
 
-	def run(self, p, mask_prompt, mask_precision, mask_output, mask_padding, plug):
+	def run(self, p, mask_prompt, negative_mask_prompt, mask_precision, mask_output, mask_padding, plug):
 		def download_file(filename, url):
 			with open(filename, 'wb') as fout:
 				response = requests.get(url, stream=True)
@@ -61,7 +62,34 @@ class Script(scripts.Script):
 			bottom = (height + new_height)/2
 
 			# Crop the center of the image
-			return(img.crop((left, top, right, bottom)))	
+			return(img.crop((left, top, right, bottom)))
+
+		def process_mask_parts(these_preds,these_prompt_parts,mode,final_img = None):
+			for i in range(these_prompt_parts):
+				filename = f"mask_{mode}_{i}.png"
+				plt.imsave(filename,torch.sigmoid(these_preds[i][0]))
+
+				# TODO: Figure out how to convert the plot above to numpy instead of re-loading image
+				img = cv2.imread(filename)
+
+				gray_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+				(thresh, bw_image) = cv2.threshold(gray_image, mask_precision, 255, cv2.THRESH_BINARY)
+
+				# For debugging only:
+				cv2.imwrite(filename,bw_image)
+
+				# overlay mask parts
+				bw_image = gray_to_pil(bw_image)
+				if (i > 0 or final_img is not None):
+					if (mode == 0):
+						bw_image = ImageChops.invert(bw_image)
+						bw_image = ImageChops.darker(bw_image, final_img)
+					else: bw_image = ImageChops.lighter(bw_image, final_img)
+					
+				final_img = bw_image
+
+			return(final_img)
 
 		def get_mask():
 			# load model
@@ -71,6 +99,7 @@ class Script(scripts.Script):
 			os.makedirs(model_dir, exist_ok=True)
 			d64_file = f"{model_dir}/rd64-uni.pth"
 			d16_file = f"{model_dir}/rd16-uni.pth"
+			delimiter_string = "|"
 			
 			# Download model weights if we don't have them yet
 			if not os.path.exists(d64_file):
@@ -88,36 +117,23 @@ class Script(scripts.Script):
 			])
 			img = transform(p.init_images[0]).unsqueeze(0)
 
-			prompts = mask_prompt.split("|")
+			prompts = mask_prompt.split(delimiter_string)
 			prompt_parts = len(prompts)
+			negative_prompts = negative_mask_prompt.split(delimiter_string)
+			negative_prompt_parts = len(negative_prompts)
 
 			# predict
 			with torch.no_grad():
 				preds = model(img.repeat(prompt_parts,1,1,1), prompts)[0]
+				negative_preds = model(img.repeat(negative_prompt_parts,1,1,1), negative_prompts)[0]
 
-			for i in range(prompt_parts):
-				filename = f"mask{i}.png"
-				plt.imsave(filename,torch.sigmoid(preds[i][0]))
+			# process masking
+			final_img = process_mask_parts(preds,prompt_parts,1)
+			
+			# process negative masking
+			final_img = process_mask_parts(negative_preds,negative_prompt_parts,0,final_img)
 
-				# TODO: Figure out how to convert the plot above to numpy instead of re-loading image
-				img = cv2.imread(filename)
-
-				gray_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-				(thresh, bw_image) = cv2.threshold(gray_image, mask_precision, 255, cv2.THRESH_BINARY)
-
-				# For debugging only:
-				cv2.imwrite(filename,bw_image)
-
-				# overlay mask parts
-				if (i > 0):
-					bw_image = ImageChops.lighter(gray_to_pil(bw_image), final_img)
-					#bw_image = pil_to_cv2(bw_image)
-					#cv2.imwrite("masktest.png",bw_image)
-					final_img = bw_image
-				else: final_img = gray_to_pil(bw_image)
-
-			# Increase mask size for padding
+			# Increase mask size with padding
 			if (mask_padding > 0):
 				aspect_ratio = p.init_images[0].width / p.init_images[0].height
 				new_width = p.init_images[0].width+mask_padding*2
