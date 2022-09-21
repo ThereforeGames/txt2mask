@@ -25,6 +25,8 @@ Adjust the `Mask Precision` field to increase or decrease the confidence of that
 
 Press Generate. That's it!
 
-## Known Issues
+## Advanced Features & Tips
 
-- This uses a different underlying tech for language interpretation, so entering a finetuned object into the Mask Prompt won't work. In general, less is more for masking: instead of trying to mask "a one-armed man doing a backflip off a barn" you will probably have more luck writing "a man."
+- The Mask Prompt allows you to search for multiple objects by using `|` as a delimiter. For example, if you enter `a face|a tree|a flower` then clipseg will process these three items independently and stack the resulting submasks into one final mask. This will likely yield a better result than had you searched for `a face and a tree and a flower`.
+- You can use the `Mask Padding` option to increase the boundaries of your selection. For example, if you enter `a red shirt` as your prompt but find that it's not quite selecting the whole shirt, and `Mask Precision` isn't helping, then you can use padding to address the issue.
+-  In general, less is more for masking: instead of trying to mask "a one-armed man doing a backflip off a barn" you will probably have more luck writing "a man."
