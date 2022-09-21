@@ -21,7 +21,7 @@ import numpy
 
 class Script(scripts.Script):
 	def title(self):
-		return "txt2mask v0.0.6"
+		return "txt2mask v0.0.7"
 
 	def show(self, is_img2img):
 		return is_img2img
@@ -76,17 +76,18 @@ class Script(scripts.Script):
 
 				(thresh, bw_image) = cv2.threshold(gray_image, mask_precision, 255, cv2.THRESH_BINARY)
 
-				# For debugging only:
-				cv2.imwrite(filename,bw_image)
+				if (mode == 0): bw_image = numpy.invert(bw_image)
 
 				# overlay mask parts
 				bw_image = gray_to_pil(bw_image)
-				if (i > 0 or final_img is not None):
+				if (i > 0 or mode == 0):
 					if (mode == 0):
-						bw_image = ImageChops.invert(bw_image)
 						bw_image = ImageChops.darker(bw_image, final_img)
 					else: bw_image = ImageChops.lighter(bw_image, final_img)
-					
+
+				# For debugging only:
+				bw_image.save(f"processed_{filename}")
+
 				final_img = bw_image
 
 			return(final_img)
@@ -110,7 +111,6 @@ class Script(scripts.Script):
 			# non-strict, because we only stored decoder weights (not CLIP weights)
 			model.load_state_dict(torch.load(d64_file, map_location=torch.device('cuda')), strict=False);			
 
-			# TODO: reserch impact of transforms.resize on clipseg
 			transform = transforms.Compose([
 				transforms.ToTensor(),
 				transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),

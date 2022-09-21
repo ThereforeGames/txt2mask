@@ -1,6 +1,10 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## 0.0.7 - 21 September 2022
+### Changed
+- Fixed issues related to negative mask prompt with images that are not 512x512
+
 ## 0.0.6 - 21 September 2022
 ### Added
 - New "Negative mask prompt" field that allows you to subtract areas from your selection
