@@ -132,7 +132,7 @@ class Script(scripts.Script):
 			final_img = process_mask_parts(preds,prompt_parts,1)
 			
 			# process negative masking
-			final_img = process_mask_parts(negative_preds,negative_prompt_parts,0,final_img)
+			if (negative_mask_prompt): final_img = process_mask_parts(negative_preds,negative_prompt_parts,0,final_img)
 
 			# Increase mask size with padding
 			if (mask_padding > 0):
