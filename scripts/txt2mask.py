@@ -14,14 +14,16 @@ import requests
 import os.path
 
 from repositories.clipseg.models.clipseg import CLIPDensePredT
-from PIL import ImageChops, Image
+from PIL import ImageChops, Image, ImageOps
 from torchvision import transforms
 from matplotlib import pyplot as plt
 import numpy
 
+debug = False
+
 class Script(scripts.Script):
 	def title(self):
-		return "txt2mask v0.0.7"
+		return "txt2mask v0.1.0"
 
 	def show(self, is_img2img):
 		return is_img2img
@@ -34,13 +36,14 @@ class Script(scripts.Script):
 		negative_mask_prompt = gr.Textbox(label="Negative mask prompt", lines=1)
 		mask_precision = gr.Slider(label="Mask precision", minimum=0.0, maximum=255.0, step=1.0, value=100.0)
 		mask_padding = gr.Slider(label="Mask padding", minimum=0.0, maximum=500.0, step=1.0, value=0.0)
+		brush_mask_mode = gr.Radio(label="Brush mask mode", choices=['discard','add','subtract'], value='discard', type="index", visible=False)
 		mask_output = gr.Checkbox(label="Show mask in output?",value=True)
 
 		plug = gr.HTML(label="plug",value='<div class="gr-block gr-box relative w-full overflow-hidden border-solid border border-gray-200 gr-panel"><p>If you like my work, please consider showing your support on <strong><a href="https://patreon.com/thereforegames" target="_blank">Patreon</a></strong>. Thank you! &#10084;</p></div>')
 
-		return [mask_prompt,negative_mask_prompt, mask_precision, mask_output, mask_padding, plug]
+		return [mask_prompt,negative_mask_prompt, mask_precision, mask_padding, brush_mask_mode, mask_output, plug]
 
-	def run(self, p, mask_prompt, negative_mask_prompt, mask_precision, mask_output, mask_padding, plug):
+	def run(self, p, mask_prompt, negative_mask_prompt, mask_precision, mask_padding, brush_mask_mode, mask_output, plug):
 		def download_file(filename, url):
 			with open(filename, 'wb') as fout:
 				response = requests.get(url, stream=True)
@@ -64,6 +67,12 @@ class Script(scripts.Script):
 			# Crop the center of the image
 			return(img.crop((left, top, right, bottom)))
 
+		def overlay_mask_part(img_a,img_b,mode):
+			if (mode == 0):
+				img_a = ImageChops.darker(img_a, img_b)
+			else: img_a = ImageChops.lighter(img_a, img_b)
+			return(img_a)
+
 		def process_mask_parts(these_preds,these_prompt_parts,mode,final_img = None):
 			for i in range(these_prompt_parts):
 				filename = f"mask_{mode}_{i}.png"
@@ -71,22 +80,22 @@ class Script(scripts.Script):
 
 				# TODO: Figure out how to convert the plot above to numpy instead of re-loading image
 				img = cv2.imread(filename)
-
 				gray_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
 				(thresh, bw_image) = cv2.threshold(gray_image, mask_precision, 255, cv2.THRESH_BINARY)
 
 				if (mode == 0): bw_image = numpy.invert(bw_image)
 
+				if (debug):
+					print(f"bw_image: {bw_image}")
+					print(f"final_img: {final_img}")
+
 				# overlay mask parts
 				bw_image = gray_to_pil(bw_image)
-				if (i > 0 or mode == 0):
-					if (mode == 0):
-						bw_image = ImageChops.darker(bw_image, final_img)
-					else: bw_image = ImageChops.lighter(bw_image, final_img)
+				if (i > 0 or final_img is not None):
+					bw_image = overlay_mask_part(bw_image,final_img,mode)
 
 				# For debugging only:
-				bw_image.save(f"processed_{filename}")
+				if (debug): bw_image.save(f"processed_{filename}")
 
 				final_img = bw_image
 
@@ -128,10 +137,25 @@ class Script(scripts.Script):
 				preds = model(img.repeat(prompt_parts,1,1,1), prompts)[0]
 				negative_preds = model(img.repeat(negative_prompt_parts,1,1,1), negative_prompts)[0]
 
+			#tests
+			if (debug):
+				print("Check initial mask vars before processing...")
+				print(f"p.image_mask: {p.image_mask}")
+				print(f"p.latent_mask: {p.latent_mask}")
+				print(f"p.mask_for_overlay: {p.mask_for_overlay}")
+
+			if (brush_mask_mode == 1 and p.image_mask is not None):
+				final_img = p.image_mask.convert("RGBA")
+			else: final_img = None
+
 			# process masking
-			final_img = process_mask_parts(preds,prompt_parts,1)
-			
+			final_img = process_mask_parts(preds,prompt_parts,1,final_img)
+
 			# process negative masking
+			if (brush_mask_mode == 2 and p.image_mask is not None):
+				p.image_mask = ImageOps.invert(p.image_mask)
+				p.image_mask = p.image_mask.convert("RGBA")
+				final_img = overlay_mask_part(final_img,p.image_mask,0)
 			if (negative_mask_prompt): final_img = process_mask_parts(negative_preds,negative_prompt_parts,0,final_img)
 
 			# Increase mask size with padding

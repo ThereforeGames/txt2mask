@@ -1,6 +1,11 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## 0.1.0 - 22 September 2022
+### Added
+- New "Brush mask mode" option that allows you to specify what to do with the normal mask, i.e. the mask created using the brush tool or uploaded image
+- Added debug mode
+
 ## 0.0.7 - 21 September 2022
 ### Changed
 - Fixed issues related to negative mask prompt with images that are not 512x512
