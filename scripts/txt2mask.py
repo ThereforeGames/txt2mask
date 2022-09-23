@@ -23,7 +23,7 @@ debug = False
 
 class Script(scripts.Script):
 	def title(self):
-		return "txt2mask v0.1.0"
+		return "txt2mask v0.1.1"
 
 	def show(self, is_img2img):
 		return is_img2img
@@ -114,8 +114,11 @@ class Script(scripts.Script):
 			# Download model weights if we don't have them yet
 			if not os.path.exists(d64_file):
 				print("Downloading clipseg model weights...")
-				download_file(d64_file,"https://github.com/timojl/clipseg/raw/master/weights/rd64-uni.pth")
-				download_file(d16_file,"https://github.com/timojl/clipseg/raw/master/weights/rd16-uni.pth")
+				download_file(d64_file,"https://owncloud.gwdg.de/index.php/s/ioHbRzFx6th32hn/download?path=%2F&files=rd64-uni.pth")
+				download_file(d16_file,"https://owncloud.gwdg.de/index.php/s/ioHbRzFx6th32hn/download?path=%2F&files=rd16-uni.pth")
+				# Mirror: 
+				# https://github.com/timojl/clipseg/raw/master/weights/rd64-uni.pth
+				# https://github.com/timojl/clipseg/raw/master/weights/rd16-uni.pth
 			
 			# non-strict, because we only stored decoder weights (not CLIP weights)
 			model.load_state_dict(torch.load(d64_file, map_location=torch.device('cuda')), strict=False);			
