@@ -14,7 +14,7 @@ import requests
 import os.path
 
 from repositories.clipseg.models.clipseg import CLIPDensePredT
-from PIL import ImageChops, Image, ImageOps
+from PIL import ImageChops, Image, ImageOps, ImageFilter
 from torchvision import transforms
 from matplotlib import pyplot as plt
 import numpy
@@ -76,26 +76,31 @@ class Script(scripts.Script):
 		def process_mask_parts(these_preds,these_prompt_parts,mode,final_img = None):
 			for i in range(these_prompt_parts):
 				filename = f"mask_{mode}_{i}.png"
-				plt.imsave(filename,torch.sigmoid(these_preds[i][0]))
+                                arr = torch.sigmoid(these_preds[i][0]).cpu()
 
-				# TODO: Figure out how to convert the plot above to numpy instead of re-loading image
-				img = cv2.imread(filename)
-				gray_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-				(thresh, bw_image) = cv2.threshold(gray_image, mask_precision, 255, cv2.THRESH_BINARY)
+                                filename = f"mask_{mode}_{i}.png"
+                                if debug:
+                                    plt.imsave(filename, arr)
 
-				if (mode == 0): bw_image = numpy.invert(bw_image)
+                                arr = (arr.numpy() * 256).astype(numpy.uint8)
 
-				if (debug):
-					print(f"bw_image: {bw_image}")
-					print(f"final_img: {final_img}")
+                                _, bw_image = cv2.threshold(arr, mask_precision, 255, cv2.THRESH_BINARY)
 
-				# overlay mask parts
-				bw_image = gray_to_pil(bw_image)
-				if (i > 0 or final_img is not None):
-					bw_image = overlay_mask_part(bw_image,final_img,mode)
+                                if mode == 0:
+                                    bw_image = numpy.invert(bw_image)
 
-				# For debugging only:
-				if (debug): bw_image.save(f"processed_{filename}")
+                                if debug:
+                                    print(f"bw_image: {bw_image}")
+                                    print(f"final_img: {final_img}")
+
+                                # overlay mask parts
+                                bw_image = Image.fromarray(cv2.cvtColor(bw_image, cv2.COLOR_GRAY2RGBA))
+                                if i > 0 or final_img is not None:
+                                    bw_image = overlay_mask_part(bw_image, final_img, mode)
+
+                                # For debugging only:
+                                if debug:
+                                    bw_image.save(f"processed_{filename}")
 
 				final_img = bw_image
 
@@ -103,22 +108,17 @@ class Script(scripts.Script):
 
 		def get_mask():
 			# load model
-			model = CLIPDensePredT(version='ViT-B/16', reduce_dim=64)
+			model = CLIPDensePredT(version='ViT-B/16', reduce_dim=64, complex_trans_conv=True)
 			model.eval();
 			model_dir = "./repositories/clipseg/weights"
 			os.makedirs(model_dir, exist_ok=True)
-			d64_file = f"{model_dir}/rd64-uni.pth"
-			d16_file = f"{model_dir}/rd16-uni.pth"
+			d64_file = f"{model_dir}/rd64-uni-refined.pth"
 			delimiter_string = "|"
 			
 			# Download model weights if we don't have them yet
 			if not os.path.exists(d64_file):
 				print("Downloading clipseg model weights...")
-				download_file(d64_file,"https://owncloud.gwdg.de/index.php/s/ioHbRzFx6th32hn/download?path=%2F&files=rd64-uni.pth")
-				download_file(d16_file,"https://owncloud.gwdg.de/index.php/s/ioHbRzFx6th32hn/download?path=%2F&files=rd16-uni.pth")
-				# Mirror: 
-				# https://github.com/timojl/clipseg/raw/master/weights/rd64-uni.pth
-				# https://github.com/timojl/clipseg/raw/master/weights/rd16-uni.pth
+				download_file(d64_file,"https://owncloud.gwdg.de/index.php/s/ioHbRzFx6th32hn/download?path=%2F&files=rd64-uni-refined.pth")
 			
 			# non-strict, because we only stored decoder weights (not CLIP weights)
 			model.load_state_dict(torch.load(d64_file, map_location=torch.device('cuda')), strict=False);			
@@ -163,11 +163,8 @@ class Script(scripts.Script):
 
 			# Increase mask size with padding
 			if (mask_padding > 0):
-				aspect_ratio = p.init_images[0].width / p.init_images[0].height
-				new_width = p.init_images[0].width+mask_padding*2
-				new_height = round(new_width / aspect_ratio)
-				final_img = final_img.resize((new_width,new_height))
-				final_img = center_crop(final_img,p.init_images[0].width,p.init_images[0].height)
+                                blur = final_img.filter(ImageFilter.GaussianBlur(radius=mask_padding))
+                                final_img = blur.point(lambda x: 255 * (x > 0))
 		
 			return (final_img)
 						
