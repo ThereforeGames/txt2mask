@@ -128,7 +128,7 @@ class Script(scripts.Script):
 				transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 				transforms.Resize((512, 512)),
 			])
-			img = transform(p.init_images[0]).unsqueeze(0)
+			img = transform(p.init_images[0].convert('RGB')).unsqueeze(0)
 
 			prompts = mask_prompt.split(delimiter_string)
 			prompt_parts = len(prompts)
