@@ -1,188 +1,315 @@
 # Author: Therefore Games
 # https://github.com/ThereforeGames/txt2img2img
 
+from math import floor
+from pathlib import Path
 import modules.scripts as scripts
 import gradio as gr
 
-from modules import processing, images, shared, sd_samplers
-from modules.processing import process_images, Processed
-from modules.shared import opts, cmd_opts, state, Options
+from modules import processing
 
 import torch
+import numpy
 import cv2
 import requests
 import os.path
 
-from repositories.clipseg.models.clipseg import CLIPDensePredT
-from PIL import ImageChops, Image, ImageOps
+from clipseg.clipseg import CLIPDensePredT
+from PIL import ImageDraw, ImageChops, Image, ImageFilter
 from torchvision import transforms
-from matplotlib import pyplot as plt
-import numpy
 
-debug = False
+
+def download_file(filename, url):
+    with open(filename, 'wb') as fout:
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        for block in response.iter_content(4096):
+            fout.write(block)
+
+
+def base_path(*parts):
+    filename = os.path.join(scripts.basedir(), *parts)
+    Path(filename).parent.mkdir(parents=True, exist_ok=True)
+    return filename
+
+
+def output_path(*parts):
+    return base_path("outputs/txt2mask", *parts)
+
+
+def mask_from_pred(pred, mask_precision):
+    arr = torch.sigmoid(pred).cpu()
+    arr = (arr.numpy() * 256).astype(numpy.uint8)
+    _, bw_image = cv2.threshold(
+        arr, mask_precision, 255, cv2.THRESH_BINARY)
+
+    return Image.fromarray(bw_image)
+
+
+def debug_mask(img, color, alpha=0.25):
+    mask = img.convert('L')
+    result = img.convert("RGBA")
+    draw = ImageDraw.Draw(result)
+    draw.rectangle([(0, 0), img.size], fill=color)
+    result.putalpha(mask.point(lambda i: floor(i*alpha)))
+    return result
+
+
+def add_masks(masks):
+    if len(masks) > 1:
+        pending = masks[::-1]
+        current = pending.pop()
+        while len(pending) > 0:
+            next = pending.pop()
+            current = ImageChops.add(current, next)
+
+        return current
+
+    if len(masks) == 1:
+        return masks[0]
+
+    return None
+
+
+def mask_from_preds(preds, mask_precision):
+    masks = [
+        mask_from_pred(pred[0], mask_precision) for pred in preds
+    ]
+    return (add_masks(masks), masks)
+
+
+def download_weights(file):
+    print("Downloading clipseg model weights...")
+    download_file(
+        file, "https://owncloud.gwdg.de/index.php/s/ioHbRzFx6th32hn/download?path=%2F&files=rd64-uni-refined.pth")
+
+
+def model_path():
+    path = Path("./models/clipseg/rd64-uni-refined.pth")
+    if not os.path.exists(path):
+        # Download model weights if we don't have them yet
+        path.parent.mkdir(parents=True, exist_ok=True)
+        download_weights(path)
+    return path
+
+
+def parse_prompt(mask_prompt, delimiter_string="|"):
+    return [part.strip() for part in mask_prompt.split(delimiter_string) if len(part.strip()) > 0]
+
+
+def load_model():
+    # load model
+    model = CLIPDensePredT(
+        version='ViT-B/16',
+        reduce_dim=64,
+        complex_trans_conv=True)
+
+    model.eval()
+
+    # non-strict, because we only stored decoder weights (not CLIP weights)
+    model.load_state_dict(torch.load(
+        model_path(), map_location=torch.device('cuda')), strict=False)
+
+    return model
+
+
+def predict_prompts(image, prompts, negative_prompts):
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225]),
+        transforms.Resize((512, 512)),
+    ])
+
+    img = transform(image).unsqueeze(0)
+
+    prompts_len = len(prompts)
+    neg_prompts_len = len(negative_prompts)
+
+    model = load_model()
+
+    preds = []
+    negative_preds = []
+    with torch.no_grad():
+        if (prompts_len):
+            preds = model(img.repeat(prompts_len, 1, 1, 1), prompts)[0]
+        if (neg_prompts_len):
+            negative_preds = model(img.repeat(
+                neg_prompts_len, 1, 1, 1), negative_prompts)[0]
+
+    return (preds, negative_preds)
+
+
+def blur(image, radius):
+    if (int(radius) > 0):
+        blur = image.filter(
+            ImageFilter.GaussianBlur(radius=radius))
+        return blur.point(lambda x: 255 * (x > 0))
+    return image
+
+
+def apply_brush_mask(image, brush_mask, brush_mask_mode):
+    if brush_mask:
+        brush_mask = brush_mask.resize(image.size).convert("L")
+        if brush_mask_mode == 1:
+            return (ImageChops.add(image, brush_mask), brush_mask)
+        elif brush_mask_mode == 2:
+            return (ImageChops.subtract(image, brush_mask), brush_mask)
+
+    return (image, None)
+
+
+def mask_preview(image, pred_mask, neg_mask, brush_mask, brush_mask_mode):
+    green = "#00FF00"
+    red = "#FF0000"
+
+    result = image.convert("RGBA")
+
+    if pred_mask:
+        result = Image.alpha_composite(result, debug_mask(pred_mask, green))
+
+    if neg_mask:
+        result = Image.alpha_composite(
+            result, debug_mask(neg_mask, red))
+
+    if brush_mask:
+        if brush_mask_mode == 1:
+            result = Image.alpha_composite(
+                result, debug_mask(brush_mask, green))
+        elif brush_mask_mode == 2:
+            result = Image.alpha_composite(
+                result, debug_mask(brush_mask, red))
+
+    return result
+
+
+def predict_mask(image,
+                 mask_prompt, negative_mask_prompt,
+                 mask_precision, negative_mask_precision,
+                 debug=False):
+    # prediction
+
+    prompts = parse_prompt(mask_prompt)
+    negative_prompts = parse_prompt(negative_mask_prompt)
+    preds, negative_preds = predict_prompts(image, prompts, negative_prompts)
+
+    # masking
+    pred_mask, prompt_masks = mask_from_preds(preds, mask_precision)
+    pred_mask = pred_mask and pred_mask.resize(image.size)
+
+    if debug:
+        for i, m in enumerate(prompt_masks):
+            m.resize(image.size).save(
+                output_path(f"prompt-{prompts[i]}.png"))
+
+    neg_mask, negs_masks = mask_from_preds(
+        negative_preds, negative_mask_precision)
+    neg_mask = neg_mask and neg_mask.resize(image.size)
+
+    if debug:
+        for i, m in enumerate(negs_masks):
+            m.resize(image.size).save(
+                output_path(f"neg_prompt-{negative_prompts[i]}.png"))
+
+    return (pred_mask, neg_mask)
+
 
 class Script(scripts.Script):
-	def title(self):
-		return "txt2mask v0.1.1"
+    def title(self):
+        return "txt2mask"
 
-	def show(self, is_img2img):
-		return is_img2img
+    def show(self, is_img2img):
+        return is_img2img
 
-	def ui(self, is_img2img):
-		if not is_img2img:
-			return None
+    def ui(self, is_img2img):
+        # TODO: show only in inpaint tab
+        with gr.Group():
+            with gr.Row():
+                mask_prompt = gr.Textbox(label="txt2mask Prompt", lines=1)
+                negative_mask_prompt = gr.Textbox(
+                    label="Negative prompt", lines=1)
+            with gr.Row():
+                mask_precision = gr.Slider(
+                    label="Prompt precision", minimum=0.0, maximum=255.0, step=1.0, value=100.0)
+                negative_mask_precision = gr.Slider(
+                    label="Negative prompt precision", minimum=0.0, maximum=255.0, step=1.0, value=100.0)
+            with gr.Row():
+                mask_padding = gr.Slider(
+                    label="Mask padding", minimum=0.0, maximum=500.0, step=1.0, value=0.0)
+                negative_mask_padding = gr.Slider(
+                    label="Negative mask padding", minimum=0.0, maximum=500.0, step=1.0, value=0.0)
 
-		mask_prompt = gr.Textbox(label="Mask prompt", lines=1)
-		negative_mask_prompt = gr.Textbox(label="Negative mask prompt", lines=1)
-		mask_precision = gr.Slider(label="Mask precision", minimum=0.0, maximum=255.0, step=1.0, value=100.0)
-		mask_padding = gr.Slider(label="Mask padding", minimum=0.0, maximum=500.0, step=1.0, value=0.0)
-		brush_mask_mode = gr.Radio(label="Brush mask mode", choices=['discard','add','subtract'], value='discard', type="index", visible=False)
-		mask_output = gr.Checkbox(label="Show mask in output?",value=True)
+            with gr.Row():
+                brush_mask_mode = gr.Radio(label="Brush mask mode", choices=[
+                    'Discard', 'Add', 'Substract'], value='Discard', type="index")
+                debug = gr.Checkbox(label="Debug", value=True)
 
-		plug = gr.HTML(label="plug",value='<div class="gr-block gr-box relative w-full overflow-hidden border-solid border border-gray-200 gr-panel"><p>If you like my work, please consider showing your support on <strong><a href="https://patreon.com/thereforegames" target="_blank">Patreon</a></strong>. Thank you! &#10084;</p></div>')
+        return [
+            mask_prompt, negative_mask_prompt,
+            mask_precision, negative_mask_precision,
+            mask_padding, negative_mask_padding,
+            brush_mask_mode,
+            debug]
 
-		return [mask_prompt,negative_mask_prompt, mask_precision, mask_padding, brush_mask_mode, mask_output, plug]
+    def run(self, params,
+            mask_prompt, negative_mask_prompt,
+            mask_precision, negative_mask_precision,
+            mask_padding, negative_mask_padding,
+            brush_mask_mode,
+            debug):
 
-	def run(self, p, mask_prompt, negative_mask_prompt, mask_precision, mask_padding, brush_mask_mode, mask_output, plug):
-		def download_file(filename, url):
-			with open(filename, 'wb') as fout:
-				response = requests.get(url, stream=True)
-				response.raise_for_status()
-				# Write response data to file
-				for block in response.iter_content(4096):
-					fout.write(block)
-		def pil_to_cv2(img):
-			return (cv2.cvtColor(numpy.array(img), cv2.COLOR_RGB2BGR))
-		def gray_to_pil(img):
-			return (Image.fromarray(cv2.cvtColor(img,cv2.COLOR_GRAY2RGBA)))
-		
-		def center_crop(img,new_width,new_height):
-			width, height = img.size   # Get dimensions
+        image = params.init_images[0]
+        pred_mask, neg_mask = predict_mask(image,
+                                           mask_prompt, negative_mask_prompt,
+                                           mask_precision, negative_mask_precision,
+                                           debug)
 
-			left = (width - new_width)/2
-			top = (height - new_height)/2
-			right = (width + new_width)/2
-			bottom = (height + new_height)/2
+        pred_mask = blur(pred_mask.resize(image.size),
+                         mask_padding) if pred_mask else None
 
-			# Crop the center of the image
-			return(img.crop((left, top, right, bottom)))
+        neg_mask = blur(neg_mask.resize(image.size),
+                        negative_mask_padding) if neg_mask else None
 
-		def overlay_mask_part(img_a,img_b,mode):
-			if (mode == 0):
-				img_a = ImageChops.darker(img_a, img_b)
-			else: img_a = ImageChops.lighter(img_a, img_b)
-			return(img_a)
+        if pred_mask and neg_mask:
+            merged = ImageChops.subtract(pred_mask, neg_mask)
+        elif pred_mask:
+            merged = pred_mask
+        elif neg_mask:
+            merged = ImageChops.invert(neg_mask)
+        else:
+            merged = Image.new("RGBA", image.size)
 
-		def process_mask_parts(these_preds,these_prompt_parts,mode,final_img = None):
-			for i in range(these_prompt_parts):
-				filename = f"mask_{mode}_{i}.png"
-				plt.imsave(filename,torch.sigmoid(these_preds[i][0]))
+        mask, brush_mask = apply_brush_mask(
+            merged, params.image_mask, brush_mask_mode)
 
-				# TODO: Figure out how to convert the plot above to numpy instead of re-loading image
-				img = cv2.imread(filename)
-				gray_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-				(thresh, bw_image) = cv2.threshold(gray_image, mask_precision, 255, cv2.THRESH_BINARY)
+        # Set up processor parameters correctly
+        params.mode = 1
+        params.mask_mode = 1
+        params.image_mask = mask
+        params.mask_for_overlay = params.image_mask
+        params.latent_mask = None  # fixes inpainting full resolution
 
-				if (mode == 0): bw_image = numpy.invert(bw_image)
+        if (debug):
+            preview = mask_preview(image,
+                                   pred_mask,
+                                   neg_mask,
+                                   brush_mask, brush_mask_mode)
 
-				if (debug):
-					print(f"bw_image: {bw_image}")
-					print(f"final_img: {final_img}")
+            if pred_mask:
+                pred_mask.save(output_path("prompt.png"))
+            if neg_mask:
+                neg_mask.save(output_path("neg_prompt.png"))
+            if brush_mask:
+                brush_mask.save(output_path("brush.png"))
+            mask.save(output_path("final.png"))
+            merged.save(output_path("merged.png"))
+            preview.save(output_path("preview.png"))
 
-				# overlay mask parts
-				bw_image = gray_to_pil(bw_image)
-				if (i > 0 or final_img is not None):
-					bw_image = overlay_mask_part(bw_image,final_img,mode)
+        processed = processing.process_images(params)
 
-				# For debugging only:
-				if (debug): bw_image.save(f"processed_{filename}")
+        if (debug):
+            processed.images.append(mask)
+            processed.images.append(preview)
 
-				final_img = bw_image
-
-			return(final_img)
-
-		def get_mask():
-			# load model
-			model = CLIPDensePredT(version='ViT-B/16', reduce_dim=64)
-			model.eval();
-			model_dir = "./repositories/clipseg/weights"
-			os.makedirs(model_dir, exist_ok=True)
-			d64_file = f"{model_dir}/rd64-uni.pth"
-			d16_file = f"{model_dir}/rd16-uni.pth"
-			delimiter_string = "|"
-			
-			# Download model weights if we don't have them yet
-			if not os.path.exists(d64_file):
-				print("Downloading clipseg model weights...")
-				download_file(d64_file,"https://owncloud.gwdg.de/index.php/s/ioHbRzFx6th32hn/download?path=%2F&files=rd64-uni.pth")
-				download_file(d16_file,"https://owncloud.gwdg.de/index.php/s/ioHbRzFx6th32hn/download?path=%2F&files=rd16-uni.pth")
-				# Mirror: 
-				# https://github.com/timojl/clipseg/raw/master/weights/rd64-uni.pth
-				# https://github.com/timojl/clipseg/raw/master/weights/rd16-uni.pth
-			
-			# non-strict, because we only stored decoder weights (not CLIP weights)
-			model.load_state_dict(torch.load(d64_file, map_location=torch.device('cuda')), strict=False);			
-
-			transform = transforms.Compose([
-				transforms.ToTensor(),
-				transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-				transforms.Resize((512, 512)),
-			])
-			img = transform(p.init_images[0]).unsqueeze(0)
-
-			prompts = mask_prompt.split(delimiter_string)
-			prompt_parts = len(prompts)
-			negative_prompts = negative_mask_prompt.split(delimiter_string)
-			negative_prompt_parts = len(negative_prompts)
-
-			# predict
-			with torch.no_grad():
-				preds = model(img.repeat(prompt_parts,1,1,1), prompts)[0]
-				negative_preds = model(img.repeat(negative_prompt_parts,1,1,1), negative_prompts)[0]
-
-			#tests
-			if (debug):
-				print("Check initial mask vars before processing...")
-				print(f"p.image_mask: {p.image_mask}")
-				print(f"p.latent_mask: {p.latent_mask}")
-				print(f"p.mask_for_overlay: {p.mask_for_overlay}")
-
-			if (brush_mask_mode == 1 and p.image_mask is not None):
-				final_img = p.image_mask.convert("RGBA")
-			else: final_img = None
-
-			# process masking
-			final_img = process_mask_parts(preds,prompt_parts,1,final_img)
-
-			# process negative masking
-			if (brush_mask_mode == 2 and p.image_mask is not None):
-				p.image_mask = ImageOps.invert(p.image_mask)
-				p.image_mask = p.image_mask.convert("RGBA")
-				final_img = overlay_mask_part(final_img,p.image_mask,0)
-			if (negative_mask_prompt): final_img = process_mask_parts(negative_preds,negative_prompt_parts,0,final_img)
-
-			# Increase mask size with padding
-			if (mask_padding > 0):
-				aspect_ratio = p.init_images[0].width / p.init_images[0].height
-				new_width = p.init_images[0].width+mask_padding*2
-				new_height = round(new_width / aspect_ratio)
-				final_img = final_img.resize((new_width,new_height))
-				final_img = center_crop(final_img,p.init_images[0].width,p.init_images[0].height)
-		
-			return (final_img)
-						
-
-		# Set up processor parameters correctly
-		p.mode = 1
-		p.mask_mode = 1
-		p.image_mask =  get_mask().resize((p.init_images[0].width,p.init_images[0].height))
-		p.mask_for_overlay = p.image_mask
-		p.latent_mask = None # fixes inpainting full resolution
-
-
-		processed = processing.process_images(p)
-
-		if (mask_output):
-			processed.images.append(p.image_mask)
-
-		return processed
+        return processed
