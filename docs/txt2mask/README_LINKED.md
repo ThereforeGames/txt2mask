@@ -1,3 +1,6 @@
+> **Warning**
+> This script has been superseded by my new extension, [Unprompted](https://github.com/ThereforeGames/unprompted), which has [the same powerful masking features](https://github.com/ThereforeGames/unprompted/blob/main/docs/MANUAL.md#txt2mask) and a lot more. I do not plan on updating the original script and I cannot guarantee that it will continue working in new versions of the A111 WebUI. Thank you for understanding.
+
 # txt2mask for Stable Diffusion
 Automatically create masks for inpainting with Stable Diffusion using natural language.
 
